@@ -75,7 +75,7 @@ def breakbox(text):
   dialog = qt.QDialog()
   ret = messageBox = qt.QMessageBox.question(dialog, 'Profiling:', text+' Continue?', qt.QMessageBox.Ok, qt.QMessageBox.Cancel)
   if ret != qt.QMessageBox.Ok:
-    raise #allows the debugger to start when attached and exceptions are caught
+    raise RuntimeError(text)  # allows the debugger to start when attached and exceptions are caught
 def profprint(className=""):
   if profiling:
     profString = "%s.%s -----------------------" % (className, whosdaddy())
@@ -424,6 +424,11 @@ class NeedleFinderWidget(ScriptedLoadableModuleWidget):
         sGrn = slicer.mrmlScene.GetNodeByID("vtkMRMLSliceNode3")
       sGrn.SetUseLabelOutline(1)
     if self.segmentEditorWidget:
+      # Ensure a segmentation node exists before setting source volume
+      if not self.segmentEditorWidget.segmentationNode():
+        segNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSegmentationNode")
+        segNode.CreateDefaultDisplayNodes()
+        self.segmentEditorWidget.setSegmentationNode(segNode)
       self.segmentEditorWidget.setSourceVolumeNode(vn)
 
   def setup(self):
@@ -4865,9 +4870,11 @@ class NeedleFinderLogic(ScriptedLoadableModuleLogic):
           rasBDef2BMod=rasB-rasBDef; rasBDef2BMod1, fDistBDef2BMod_mm=normalized(rasBDef2BMod)
           rasB=rasBDef+rasBDef2BMod1*min(fMaxDistBDef2BMod_mm,fDistBDef2BMod_mm/2.)
         fAngleMultiSegments_rad=0
-        if fStepSize_mm/fModelSegmentLength_mm < 1: iFineStep=5; print("# fine steps ")
+        fSumAngle_deg=np.degrees(fSumAngle_rad)
+        _fModelSegLen = max(fModelSegmentLength_mm, 1.0)  # prevent division by zero
+        if fStepSize_mm/_fModelSegLen < 1: iFineStep=5; print("# fine steps ")
         else: iFineStep=1; print("normal steps")
-        for j in range(0, int(round(fStepSize_mm/(fModelSegmentLength_mm/iFineStep)))):
+        for j in range(0, int(round(fStepSize_mm/(_fModelSegLen/iFineStep)))):
           fF_mmN=fF_mmN/np.cos(fSumAngle_rad)
           fStepAngle_rad=fF_mmN/(fK*iFineStep); angle_deg=np.degrees(fStepAngle_rad)
           fSumAngle_rad-=fStepAngle_rad; fSumAngle_deg=np.degrees(fSumAngle_rad)
@@ -5036,12 +5043,14 @@ class NeedleFinderLogic(ScriptedLoadableModuleLogic):
           # calculates nTIter = number of points per segment
           for iTStep in range(int(nTIter) + 1):
 
-            fTStep = iTStep / float(nTIter)
+            fTStep = iTStep / float(nTIter) if nTIter else 0.0
 
             # x,y,z coordinates
             for i in range(3):
 
               lijkM[iTStep][i] = (1 - fTStep) * ijkA[i] + fTStep * ijkC[i]
+              if np.isnan(lijkM[iTStep][i]):
+                lijkM[iTStep][i] = ijkA[i]
               ijk[i] = int(round(lijkM[iTStep][i]))
 
             # first, test if points are in the image space
@@ -9535,28 +9544,168 @@ class NeedleFinderTest(ScriptedLoadableModuleTest):
     slicer.mrmlScene.Clear()
 
   def runTest(self, **kwargs):
-    """ Test:
-    Run as few or as many tests as needed here.
-    """
-    # test #framework #productive
-    profprint()
-
+    """Run as few or as many tests as needed here."""
     self.setUp()
-    self.test_NeedleFinder1()
+    self.test_HasImageData()
+    self.test_CoordinateConversion()
+    self.test_LabelMapCreation()
+    self.test_LabelAtIJK()
+    self.test_WandFillAtIJK()
+    self.test_NeedleDetection()
+    self.delayDisplay("All tests passed!")
 
-  def test_NeedleFinder1(self):
-    """
-    Basic test: download sample data and verify the logic can check for image data.
-    """
-
-    self.delayDisplay("Starting the test")
-
-    # Use Slicer's built-in SampleData module
+  def test_HasImageData(self):
+    """Test that hasImageData correctly validates volume nodes."""
+    self.delayDisplay("Testing hasImageData")
     import SampleData
     volumeNode = SampleData.downloadSample("MRHead")
-    self.delayDisplay("Loaded MRHead sample data")
-
     self.assertIsNotNone(volumeNode)
     logic = NeedleFinderLogic()
     self.assertTrue(logic.hasImageData(volumeNode))
-    self.delayDisplay("Test passed!")
+    self.assertFalse(logic.hasImageData(None))
+    self.delayDisplay("test_HasImageData passed")
+
+  def test_CoordinateConversion(self):
+    """Test IJK to RAS conversion using the volume's transform matrix."""
+    self.delayDisplay("Testing coordinate conversion")
+    import SampleData
+    volumeNode = SampleData.downloadSample("MRHead")
+
+    logic = NeedleFinderLogic()
+    # Test ijk -> ras with explicit volume node
+    ijkOriginal = [128, 128, 64]
+    ras = logic.ijk2ras(ijkOriginal, volumeNode)
+    self.assertIsNotNone(ras)
+    self.assertEqual(len(ras), 3)
+    for v in ras:
+      self.assertFalse(np.isnan(v), "RAS coordinate should not be NaN")
+
+    # Verify roundtrip using the volume's IJK<->RAS matrix directly
+    m = vtk.vtkMatrix4x4()
+    volumeNode.GetIJKToRASMatrix(m)
+    m.Invert()
+    k = vtk.vtkMatrix4x4()
+    o = vtk.vtkMatrix4x4()
+    k.SetElement(0, 3, ras[0])
+    k.SetElement(1, 3, ras[1])
+    k.SetElement(2, 3, ras[2])
+    k.Multiply4x4(m, k, o)
+    ijkRoundtrip = [o.GetElement(0, 3), o.GetElement(1, 3), o.GetElement(2, 3)]
+    for i in range(3):
+      self.assertAlmostEqual(ijkOriginal[i], ijkRoundtrip[i], places=3,
+        msg=f"IJK roundtrip failed at index {i}: {ijkOriginal[i]} != {ijkRoundtrip[i]}")
+    self.delayDisplay("test_CoordinateConversion passed")
+
+  def test_LabelMapCreation(self):
+    """Test that label map volume can be created from a source volume."""
+    self.delayDisplay("Testing label map creation")
+    import SampleData
+    volumeNode = SampleData.downloadSample("MRHead")
+    slicer.util.setSliceViewerLayers(background=volumeNode)
+    slicer.app.processEvents()
+
+    # Create label map using volumes logic (same method as NeedleFinder)
+    volLogic = slicer.modules.volumes.logic()
+    labelMapNode = volLogic.CreateAndAddLabelVolume(slicer.mrmlScene, volumeNode, "test-label")
+    self.assertIsNotNone(labelMapNode)
+    self.assertIsNotNone(labelMapNode.GetImageData())
+    # Verify dimensions match source volume
+    srcDims = volumeNode.GetImageData().GetDimensions()
+    lblDims = labelMapNode.GetImageData().GetDimensions()
+    self.assertEqual(srcDims, lblDims, "Label map dimensions should match source volume")
+    self.delayDisplay("test_LabelMapCreation passed")
+
+  def test_LabelAtIJK(self):
+    """Test labelAtIJK queries label values correctly."""
+    self.delayDisplay("Testing labelAtIJK")
+    import SampleData
+    volumeNode = SampleData.downloadSample("MRHead")
+
+    volLogic = slicer.modules.volumes.logic()
+    labelMapNode = volLogic.CreateAndAddLabelVolume(slicer.mrmlScene, volumeNode, "test-labelAtIJK")
+    logic = NeedleFinderLogic()
+
+    # Initially all labels should be 0
+    self.assertEqual(logic.labelAtIJK(labelMapNode, [64, 64, 32]), 0)
+
+    # Set a voxel to a known label value
+    imageData = labelMapNode.GetImageData()
+    imageData.SetScalarComponentFromFloat(64, 64, 32, 0, 42.0)
+    self.assertEqual(logic.labelAtIJK(labelMapNode, [64, 64, 32]), 42)
+
+    # Out of bounds should return 0
+    dims = imageData.GetDimensions()
+    self.assertEqual(logic.labelAtIJK(labelMapNode, [dims[0]+1, 0, 0]), 0)
+    self.assertEqual(logic.labelAtIJK(labelMapNode, [-1, 0, 0]), 0)
+
+    # None input should return 0
+    self.assertEqual(logic.labelAtIJK(None, [0, 0, 0]), 0)
+    self.delayDisplay("test_LabelAtIJK passed")
+
+  def test_WandFillAtIJK(self):
+    """Test wandFillAtIJK flood fills connected region correctly."""
+    self.delayDisplay("Testing wandFillAtIJK")
+    import SampleData
+    volumeNode = SampleData.downloadSample("MRHead")
+
+    volLogic = slicer.modules.volumes.logic()
+    labelMapNode = volLogic.CreateAndAddLabelVolume(slicer.mrmlScene, volumeNode, "test-wandFill")
+    logic = NeedleFinderLogic()
+
+    # Before fill, center should be label 0
+    self.assertEqual(logic.labelAtIJK(labelMapNode, [128, 128, 64]), 0)
+
+    # Fill at center with label 5
+    logic.wandFillAtIJK(labelMapNode, [128, 128, 64], newLabel=5, tolerance=0)
+
+    # After fill, center should be label 5 (at minimum the seed point)
+    result = logic.labelAtIJK(labelMapNode, [128, 128, 64])
+    self.assertEqual(result, 5, f"Expected label 5 at seed point, got {result}")
+
+    # None input should not crash
+    logic.wandFillAtIJK(None, [0, 0, 0], 1)
+    self.delayDisplay("test_WandFillAtIJK passed")
+
+  def test_NeedleDetection(self):
+    """Test needle detection algorithm runs without errors on sample data.
+    Requires GUI (layout manager) — skipped in headless mode.
+    """
+    self.delayDisplay("Testing needle detection")
+
+    # Skip if no layout manager (headless mode)
+    if not slicer.app.layoutManager():
+      print("  test_NeedleDetection: SKIPPED (no layout manager in headless mode)")
+      return
+
+    import SampleData
+    volumeNode = SampleData.downloadSample("MRHead")
+    slicer.util.setSliceViewerLayers(background=volumeNode)
+    slicer.app.processEvents()
+
+    widget = slicer.modules.NeedleFinderWidget
+    logic = widget.logic
+
+    # Create label map
+    widget.createAddOrSelectLabelMapNode(script=True)
+    self.assertIsNotNone(widget.labelMapNode)
+
+    # Place axial limit marker
+    logic.placeAxialLimitMarker(assign=False)
+
+    # Get image data and spacing
+    imageData = volumeNode.GetImageData()
+    spacing = np.array(volumeNode.GetSpacing())
+    dims = imageData.GetDimensions()
+
+    # Pick a point near center of volume
+    tipIJK = [dims[0]//2, dims[1]//2, dims[2]//2]
+
+    # Run needle detection in script mode (no GUI interaction)
+    try:
+      logic.needleDetectionThread([tipIJK], imageData, spacing=spacing, script=True)
+      self.delayDisplay("Needle detection completed without crash")
+    except Exception as e:
+      import traceback
+      traceback.print_exc()
+      self.fail(f"Needle detection raised an unexpected error: {e}")
+    self.delayDisplay("test_NeedleDetection passed")

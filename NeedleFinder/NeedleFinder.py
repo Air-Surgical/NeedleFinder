@@ -27,7 +27,8 @@ meaning the integral of the gaussian is not always 1 - we could see the impact o
 redoing the parameter search with it.
 """
 
-import unittest
+import logging
+import os
 import math, time, operator
 import numpy
 import numpy as np
@@ -40,14 +41,23 @@ import sitkUtils
 import os.path
 import time as t
 import vtk, qt, ctk, slicer
+from slicer.ScriptedLoadableModule import *
 import shutil
 import fnmatch
 from functools import partial
 import xml.etree.ElementTree
 from xml.etree.ElementTree import tostring
 
-import EditorLib
-from Editor import EditorWidget
+_has_editor_lib = False
+try:
+    import EditorLib
+    from Editor import EditorWidget
+    _has_editor_lib = True
+except ImportError:
+    logging.warning(
+        "EditorLib/Editor not available (removed in Slicer 5.x). "
+        "Segmentation editor features will be disabled."
+    )
 
 # profiling/debugging helper functions:
 def whoami():
@@ -114,21 +124,21 @@ outlierThresh_mm=3 #or 2,3, 3.4 or 4 mm
 # NeedleFinder
 #
 
-class NeedleFinder:
+class NeedleFinder(ScriptedLoadableModule):
   def __init__(self, parent):
     """
     init's the class
     """
+    ScriptedLoadableModule.__init__(self, parent)
     # productive
     profprint()
-    parent.title = "NeedleFinder"
-    parent.categories = ["IGT"]
-    parent.dependencies = []
-    parent.contributors = ["Guillaume Pernelle", "Andre Mastmeyer", "Ruibin Ma", "Alireza Mehrtash", "Lauren Barber", "Nabgha Fahrat", "Sandy Wells", "Yi Gao", "Antonio Damato", "Tina Kapur", "Akila Viswanathan"]
-    parent.helpText = "https://github.com/gpernelle/NeedleFinder/wiki";
-    parent.acknowledgementText = " Version : " + "NeedleFinder 2015 v1.0."
+    self.parent.title = "NeedleFinder"
+    self.parent.categories = ["IGT"]
+    self.parent.dependencies = []
+    self.parent.contributors = ["Guillaume Pernelle", "Andre Mastmeyer", "Ruibin Ma", "Alireza Mehrtash", "Lauren Barber", "Nabgha Fahrat", "Sandy Wells", "Yi Gao", "Antonio Damato", "Tina Kapur", "Akila Viswanathan"]
+    self.parent.helpText = "https://github.com/gpernelle/NeedleFinder/wiki"
+    self.parent.acknowledgementText = " Version : " + "NeedleFinder 2015 v1.0."
     self.NeedleFinderWidget = 0
-    self.parent = parent
     self.loaded = 0
     self.logic = NeedleFinderLogic()
     try:
@@ -195,25 +205,16 @@ class NeedleFinder:
 # NeedleFinderWidget
 #
 
-class NeedleFinderWidget:
+class NeedleFinderWidget(ScriptedLoadableModuleWidget):
 
   def __init__(self, parent=None):
     """
     init's the class
     """
+    ScriptedLoadableModuleWidget.__init__(self, parent)
     # productive
     profprint()
-    if not parent:
-      self.parent = slicer.qMRMLWidget()
-      self.parent.setLayout(qt.QVBoxLayout())
-      self.parent.setMRMLScene(slicer.mrmlScene)
-    else:
-      self.parent = parent
-    self.layout2 = self.parent.layout()
-    self.layout = qt.QFormLayout()
-    if not parent:
-      self.setup()
-      self.parent.show()
+    self.formLayout = qt.QFormLayout()
 
     self.analysisGroupBox = None
     self.buttonsGroupBox = None
@@ -278,6 +279,18 @@ class NeedleFinderWidget:
 
   def __del__(self):
     self.removeObservers()
+
+  def cleanup(self):
+    """Called when the application closes and the module widget is destroyed."""
+    self.removeObservers()
+
+  def enter(self):
+    """Called each time the user opens this module."""
+    pass
+
+  def exit(self):
+    """Called each time the user opens a different module."""
+    pass
 
   def getName(self):
     """
@@ -393,7 +406,10 @@ class NeedleFinderWidget:
     volLogic = slicer.modules.volumes.logic()
     sliceLogic = slicer.app.layoutManager().sliceWidget("Red").sliceLogic()
     vn = sliceLogic.GetBackgroundLayer().GetVolumeNode()
-    self.labelMapNode = slicer.util.getNode(vn.GetName() + "-label")
+    try:
+      self.labelMapNode = slicer.util.getNode(vn.GetName() + "-label")
+    except slicer.util.MRMLNodeNotFoundException:
+      self.labelMapNode = None
     if not self.labelMapNode:
       self.labelMapNode = volLogic.CreateAndAddLabelVolume(slicer.mrmlScene, vn, vn.GetName() + "-label")
     # select label volume
@@ -421,8 +437,9 @@ class NeedleFinderWidget:
       if sGrn == None :
         sGrn = slicer.mrmlScene.GetNodeByID("vtkMRMLSliceNode3")
       sGrn.SetUseLabelOutline(1)
-    self.editorWidget.setMasterNode(vn)
-    self.editorWidget.setMergeNode(self.labelMapNode)
+    if self.editorWidget:
+      self.editorWidget.setMasterNode(vn)
+      self.editorWidget.setMergeNode(self.labelMapNode)
 
   def onEditorCollapsed(self, collapsed):
     """
@@ -439,6 +456,7 @@ class NeedleFinderWidget:
     """
     Instantiate and connect widgets
     """
+    ScriptedLoadableModuleWidget.setup(self)
     # productive
     profprint()
     #-----------------------------------------------------------------------------
@@ -837,35 +855,44 @@ class NeedleFinderWidget:
     self.setAsValNeedlesButton.setStyleSheet("background-color: qlineargradient(x1: 0, y1: 0, x2: 0, y2: 1, stop: 0 #f7f700, stop: 1 #dbdb00)");
 
     # ## create segmentation editor environment:
-    editorWidgetParent = slicer.qMRMLWidget()
-    editorWidgetParent.setLayout(qt.QVBoxLayout())
-    editorWidgetParent.setMRMLScene(slicer.mrmlScene)
-    editorWidgetParent.hide()
-    self.editorWidget = None
-    # The order of statements is important here for resetNeedleDetection to work!!
-    self.editorWidget = EditorWidget(editorWidgetParent, False)
-    self.editUtil = None
-    self.editUtil = self.editorWidget.editUtil  # EditorLib.EditUtil.EditUtil()
-    self.currentLabel = None
-    self.setWandEffectOptions()  # has to be done before setup():
-    self.editUtil.setCurrentEffect("DefaultTool")
-    self.editorWidget.setup()
-    # our mouse mode button
-    self.editorWidget.toolsBox.actions["NeedleFinder"] = qt.QAction(0)  # dummy self.fiducialButton
-    self.undoRedo = None
-    self.undoRedo = self.editorWidget.toolsBox.undoRedo
-    self.currentLabel = self.editUtil.getLabel()
-    self.editorWidget.editLabelMapsFrame.setText("Edit Segmentation")
-    self.editorWidget.editLabelMapsFrame.connect('contentsCollapsed(bool)', self.onEditorCollapsed)
-    editorWidgetParent.show()
-    self.editUtil.setCurrentEffect("NeedleFinder")
+    editorWidgetParent = None
+    if _has_editor_lib:
+      editorWidgetParent = slicer.qMRMLWidget()
+      editorWidgetParent.setLayout(qt.QVBoxLayout())
+      editorWidgetParent.setMRMLScene(slicer.mrmlScene)
+      editorWidgetParent.hide()
+      self.editorWidget = None
+      # The order of statements is important here for resetNeedleDetection to work!!
+      self.editorWidget = EditorWidget(editorWidgetParent, False)
+      self.editUtil = None
+      self.editUtil = self.editorWidget.editUtil  # EditorLib.EditUtil.EditUtil()
+      self.currentLabel = None
+      self.setWandEffectOptions()  # has to be done before setup():
+      self.editUtil.setCurrentEffect("DefaultTool")
+      self.editorWidget.setup()
+      # our mouse mode button
+      self.editorWidget.toolsBox.actions["NeedleFinder"] = qt.QAction(0)  # dummy self.fiducialButton
+      self.undoRedo = None
+      self.undoRedo = self.editorWidget.toolsBox.undoRedo
+      self.currentLabel = self.editUtil.getLabel()
+      self.editorWidget.editLabelMapsFrame.setText("Edit Segmentation")
+      self.editorWidget.editLabelMapsFrame.connect('contentsCollapsed(bool)', self.onEditorCollapsed)
+      editorWidgetParent.show()
+      self.editUtil.setCurrentEffect("NeedleFinder")
+    else:
+      logging.warning("EditorLib not available; segmentation editor features disabled.")
+      self.editorWidget = None
+      self.editUtil = None
+      self.undoRedo = None
+      self.currentLabel = None
 
     self.scenePath = qt.QLineEdit()
     self.cleanSceneButton = qt.QPushButton('Clean Scene')
     self.cleanSceneButton.connect('clicked()', logic.cleanScene)
 
     # devFrame.addRow(self.displayFiducialButton)
-    devFrame.addWidget(editorWidgetParent)
+    if editorWidgetParent:
+      devFrame.addWidget(editorWidgetParent)
     devFrame.addRow(self.scenePath)
     devFrame.addRow(self.cleanSceneButton)
     devFrame.addRow(self.skipSegLimitButton)
@@ -879,19 +906,19 @@ class NeedleFinderWidget:
     devFrame.addRow(self.templateRegistrationButton)
 
     #put frames on the tab########################################
-    self.layout.addRow(self.__segmentationFrame)
-    #self.layout.addRow(self.__reportFrame)
-    # self.layout.addRow(self.__reportFrameCTL)
-    self.layout.addRow(self.__validationFrame)
-    self.layout.addRow(self.__parameterFrame)
-    self.layout.addRow(self.__devFrame)
+    self.formLayout.addRow(self.__segmentationFrame)
+    #self.formLayout.addRow(self.__reportFrame)
+    # self.formLayout.addRow(self.__reportFrameCTL)
+    self.formLayout.addRow(self.__validationFrame)
+    self.formLayout.addRow(self.__parameterFrame)
+    self.formLayout.addRow(self.__devFrame)
 
     # reset module
     resetButton = qt.QPushButton('Reset Module')
     resetButton.connect('clicked()', self.onReload)
     self.widget = slicer.qMRMLWidget()
-    self.widget.setLayout(self.layout)
-    self.layout2.addWidget(self.widget)
+    self.widget.setLayout(self.formLayout)
+    self.layout.addWidget(self.widget)
 
     # init table report
     self.initTableView()  # init the report table
@@ -899,7 +926,10 @@ class NeedleFinderWidget:
 
     # Lauren's feature request: set mainly unused coronal view to sagittal to display ground truth bitmap image (if available)
     # Usage after fresh slicer start: 1. Load scene and 2. reference jpg. 3. Then open NeedleFinder from Modules selector
-    vnJPG = slicer.util.getNode("Case *")  # the naming convention for the ground truth JPG files: "Case XXX.jpg"
+    try:
+      vnJPG = slicer.util.getNode("Case *")  # the naming convention for the ground truth JPG files: "Case XXX.jpg"
+    except slicer.util.MRMLNodeNotFoundException:
+      vnJPG = None
     if vnJPG:
       print("showing ground 2d image truth in green view")
       # show JPG image if available
@@ -925,6 +955,8 @@ class NeedleFinderWidget:
     """
     # research
     profprint()
+    if not _has_editor_lib or self.editUtil is None:
+      return
     parameterNode = self.editUtil.getParameterNode()
     # set options
     parameterNode.SetParameter("WandEffect,tolerance", str(tolerance))
@@ -1128,31 +1160,7 @@ class NeedleFinderWidget:
           self.styleObserverTags.append([style, tag])
       # TODO: also observe the slice nodes
 
-  def onReload(self, moduleName="NeedleFinder"):
-    """
-    Generic reload method for any scripted module.
-    ModuleWizard will subsitute correct default moduleName.
-    """
-    if profiling : profbox()
-    # framework
-    globals()[moduleName] = slicer.util.reloadScriptedModule(moduleName)
-
-  def onReloadAndTest(self, moduleName="NeedleFinder"):
-    """
-    Generic reload method for any scripted module.
-    ModuleWizard will subsitute correct default moduleName.
-    """
-    print("onReloadAndTest"); msgbox(whoami())
-    try:
-      self.onReload()
-      evalString = 'globals()["%s"].%sTest()' % (moduleName, moduleName)
-      tester = eval(evalString)
-      tester.runTest()
-    except Exception as e:
-      import traceback
-      traceback.print_exc()
-      qt.QMessageBox.warning(slicer.util.mainWindow(),
-          "Reload and Test", 'Exception!\n\n' + str(e) + "\n\nSee Python Console for Stack Trace")
+  # onReload and onReloadAndTest are provided by ScriptedLoadableModuleWidget base class
 
   def onStartStopGivingNeedleTipsToggled(self, checked=True):
     """
@@ -1167,11 +1175,13 @@ class NeedleFinderWidget:
       self.fiducialObturatorButton.checked = 0
       self.start()
       self.fiducialButton.text = "2. Stop Giving Needle Tips [CTRL + ENTER]"
-      widget.editUtil.setCurrentEffect("NeedleFinder")
+      if widget.editUtil:
+        widget.editUtil.setCurrentEffect("NeedleFinder")
     else:
       self.stop()
       self.fiducialButton.text = "2. Start Giving Needle Tips [CTRL + ENTER]"
-      widget.editUtil.setCurrentEffect("DefaultTool")
+      if widget.editUtil:
+        widget.editUtil.setCurrentEffect("DefaultTool")
       widget.resetDetectionButton.setEnabled(1)
       tempFidNodes = slicer.mrmlScene.GetNodesByName('.temp')
       for i in range(tempFidNodes.GetNumberOfItems()):
@@ -1363,7 +1373,7 @@ class NeedleFinderWidget:
                   node.SetFiducialCoordinates(ras)
                   self.tempPointList.append(ras)  # [0],ras[1],ras[2])
                   print("tempPointList: ", self.tempPointList)
-                if sliceLogic not in self.wandLogics:
+                if _has_editor_lib and sliceLogic not in self.wandLogics:
                   if not self.labelMapNode:
                     self.createAddOrSelectLabelMapNode()
                   print("creating new segment logic")
@@ -1527,7 +1537,8 @@ class NeedleFinderWidget:
     profprint()
     widget = slicer.modules.NeedleFinderWidget
     print("clearing label map")
-    self.undoRedo.saveState()
+    if self.undoRedo:
+      self.undoRedo.saveState()
     labelImage = self.labelMapNode.GetImageData()
     shape = list(labelImage.GetDimensions()).reverse() # ??? this code has no effect, shape=None !!!
     labelArray = vtk.util.numpy_support.vtk_to_numpy(labelImage.GetPointData().GetScalars()).reshape(shape)
@@ -1535,7 +1546,8 @@ class NeedleFinderWidget:
       labelArray[:] = 0
     else:
       labelArray[labelArray==label]=0
-    self.editUtil.markVolumeNodeAsModified(widget.labelMapNode)
+    if self.editUtil:
+      self.editUtil.markVolumeNodeAsModified(widget.labelMapNode)
 
   def processEventNeedleValidation(self, observee, event=None):
     """
@@ -1703,7 +1715,7 @@ NEEDLEFINDER LOGIC
 
 """
 
-class NeedleFinderLogic:
+class NeedleFinderLogic(ScriptedLoadableModuleLogic):
   """
   This class implements all the actual
   computation done by the module.  The interface
@@ -1717,6 +1729,7 @@ class NeedleFinderLogic:
     """
     init's the class
     """
+    ScriptedLoadableModuleLogic.__init__(self)
     # productive
     profprint()
     # initialisation of global variables
@@ -2537,6 +2550,9 @@ class NeedleFinderLogic:
     # research #obsolete
     profbox(whoami())
     # Apply Island Effect
+    if not _has_editor_lib:
+      logging.warning("EditorLib not available; island effect cannot be applied.")
+      return
     editUtil = EditorLib.EditUtil.EditUtil()
     parameterNode = editUtil.getParameterNode()
     sliceLogic = editUtil.getSliceLogic()
@@ -4923,11 +4939,16 @@ class NeedleFinderLogic:
     else:
       fEstNeedleLength_mm = ijkA[2] * 0.9 * fvSpacing[2] # CONST
     #load external needle model matrices (variable = file name)
-    sourceDir=slicer.util.modulePath('NeedleFinder').rstrip('NeedleFinder.py')
-    exec(compile(open(sourceDir+"matFs_mN.py", "rb").read(), sourceDir+"matFs_mN.py", 'exec')) in locals()
-    exec(compile(open(sourceDir+"matArcLen_mm.py", "rb").read(), sourceDir+"matArcLen_mm.py", 'exec')) in locals()
-    exec(compile(open(sourceDir+"matYDefl_mm.py", "rb").read(), sourceDir+"matYDefl_mm.py", 'exec')) in locals()
-    exec(compile(open(sourceDir+"matEndSegAngles_rad.py", "rb").read(), sourceDir+"matEndSegAngles_rad.py", 'exec')) in locals()
+    sourceDir=os.path.join(os.path.dirname(slicer.util.modulePath('NeedleFinder')), 'Data', '')
+    _mat_vars = {}
+    exec(compile(open(sourceDir+"matFs_mN.py", "rb").read(), sourceDir+"matFs_mN.py", 'exec'), _mat_vars)
+    exec(compile(open(sourceDir+"matArcLen_mm.py", "rb").read(), sourceDir+"matArcLen_mm.py", 'exec'), _mat_vars)
+    exec(compile(open(sourceDir+"matYDefl_mm.py", "rb").read(), sourceDir+"matYDefl_mm.py", 'exec'), _mat_vars)
+    exec(compile(open(sourceDir+"matEndSegAngles_rad.py", "rb").read(), sourceDir+"matEndSegAngles_rad.py", 'exec'), _mat_vars)
+    matFs_mN = _mat_vars['matFs_mN']
+    matArcLen_mm = _mat_vars['matArcLen_mm']
+    matYDefl_mm = _mat_vars['matYDefl_mm']
+    matEndSegAngles_rad = _mat_vars['matEndSegAngles_rad']
     fAngleRefNeedle_rad=np.deg2rad(22.5)# <<< to rotate z-axis down 22.5 degrees around x
     fvX=np.array([1,0,0]); fvY=-np.array([0,np.cos(fAngleRefNeedle_rad),np.sin(fAngleRefNeedle_rad)])
     fvZ=np.array([0,np.sin(fAngleRefNeedle_rad),  -   np.cos(fAngleRefNeedle_rad)])
@@ -7224,12 +7245,12 @@ class NeedleFinderLogic:
     """
     profbox()
     if self.buttonsGroupBox != None:
-      self.layout.removeWidget(self.buttonsGroupBox)
+      self.formLayout.removeWidget(self.buttonsGroupBox)
       self.buttonsGroupBox.deleteLater()
       self.buttonsGroupBox = None
     self.buttonsGroupBox = qt.QGroupBox()
     self.buttonsGroupBox.setTitle('Manage Needles')
-    self.layout.addRow(self.buttonsGroupBox)
+    self.formLayout.addRow(self.buttonsGroupBox)
     self.buttonsGroupBoxLayout = qt.QFormLayout(self.buttonsGroupBox)
 
     modelNodes = slicer.util.getNodes('vtkMRMLModelNode*')
@@ -8823,7 +8844,7 @@ class NeedleFinderLogic:
     #####################################################################################
     # We put back the volume node
     #####################################################################################
-    Helper.SetBgFgVolumes(imageData.GetID(), None)
+    slicer.util.setSliceViewerLayers(background=imageData.GetID())
     print('BG set')
     #####################################################################################
     # set ROI
@@ -8897,6 +8918,9 @@ class NeedleFinderLogic:
     # different label to each
     #####################################################################################
     print('island effect')
+    if not _has_editor_lib:
+      logging.warning("EditorLib not available; island effect cannot be applied.")
+      return
     editUtil = EditorLib.EditUtil.EditUtil()
     parameterNode = editUtil.getParameterNode()
     sliceLogic = editUtil.getSliceLogic()
@@ -8964,7 +8988,7 @@ class NeedleFinderLogic:
     #####################################################################################
     self.firstRegistration()
     print('Registration Done!!!')
-    Helper.SetBgFgVolumes(imageData.GetID(), None)
+    slicer.util.setSliceViewerLayers(background=imageData.GetID())
 
   def getAndSortFiducialPoints(self, center):
       """
@@ -9544,44 +9568,16 @@ TESTS
 
 """
 
-class NeedleFinderTest(unittest.TestCase):
+class NeedleFinderTest(ScriptedLoadableModuleTest):
   """
   This is the test case for your scripted module.
+  Uses ScriptedLoadableModuleTest base class, available at:
+  https://github.com/Slicer/Slicer/blob/main/Base/Python/slicer/ScriptedLoadableModule.py
   """
 
-  def getName(self):
-    """
-    return class name
-    """
-    return self.__class__.__name__
-
-  def delayDisplay(self, message, msec=1000):
-    """ Test:
-    This utility method displays a small dialog and waits.
-    This does two things: 1) it lets the event loop catch up
-    to the state of the test so that rendering and widget updates
-    have all taken place before the test continues and 2) it
-    shows the user/developer/tester the state of the test
-    so that we'll know when it breaks.
-    """
-    # test
-    profprint()
-    print(message)
-    self.info = qt.QDialog()
-    self.infoLayout = qt.QVBoxLayout()
-    self.info.setLayout(self.infoLayout)
-    self.label = qt.QLabel(message, self.info)
-    self.infoLayout.addWidget(self.label)
-    qt.QTimer.singleShot(msec, self.info.close)
-    self.info.exec_()
-
   def setUp(self):
-    """ Test:
-    Do whatever is needed to reset the state - typically a scene clear will be enough.
-    """
-    # test
-    profprint()
-    slicer.mrmlScene.Clear(0)
+    """Do whatever is needed to reset the state - typically a scene clear will be enough."""
+    slicer.mrmlScene.Clear()
 
   def runTest(self):
     """ Test:

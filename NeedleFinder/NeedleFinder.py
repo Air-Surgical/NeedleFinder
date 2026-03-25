@@ -147,22 +147,21 @@ class NeedleFinder(ScriptedLoadableModule):
       slicer.selfTests = {}
     slicer.selfTests['NeedleFinder'] = self.runTest
 
-    def __onNodeAdded__(self, caller, eventId, callData):
+    def __onNodeAdded__(self, caller, eventId, callData=None):
       ''' IF fiducial node, observe mvt for undo function
       '''
       self.logic.observeSingleFiducial(callData, eventId)
 
-    def __onNodeRemoved__(self, caller, eventId, callData):
+    def __onNodeRemoved__(self, caller, eventId, callData=None):
       ''' Delete observer if fiducial node removed
       '''
       self.logic.removeNodeObserver(caller, eventId)
 
-    def __onSceneLoaded__(self, caller, eventId, callData):
+    def __onSceneLoaded__(self, caller, eventId, callData=None):
       """Load CTRL points AFTER scene finished to be loaded"""
       self.logic.loadCTLPointsInTable()
-      # return 0
 
-    def __onSceneClosed__(self, caller, eventId, callData):
+    def __onSceneClosed__(self, caller, eventId, callData=None):
       """Clean report table and internal variables"""
       self.logic.cleanTable()
       w = slicer.modules.NeedleFinderWidget
@@ -192,14 +191,14 @@ class NeedleFinder(ScriptedLoadableModule):
     """
     return self.__class__.__name__
 
-  def runTest(self):
+  def runTest(self, **kwargs):
     """
     Unit testing
     """
     # framework #testing
     profprint()
     tester = NeedleFinderTest()
-    tester.runTest()
+    tester.runTest(**kwargs)
 
 #
 # NeedleFinderWidget
@@ -9579,7 +9578,7 @@ class NeedleFinderTest(ScriptedLoadableModuleTest):
     """Do whatever is needed to reset the state - typically a scene clear will be enough."""
     slicer.mrmlScene.Clear()
 
-  def runTest(self):
+  def runTest(self, **kwargs):
     """ Test:
     Run as few or as many tests as needed here.
     """
@@ -9591,42 +9590,17 @@ class NeedleFinderTest(ScriptedLoadableModuleTest):
 
   def test_NeedleFinder1(self):
     """
-    Unit test
-    """
-    # test #framework
-    profprint()
-    """
-    Ideally you should have several levels of tests.  At the lowest level
-    tests sould exercise the functionality of the logic with different inputs
-    (both valid and invalid).  At higher levels your tests should emulate the
-    way the user would interact with your code and confirm that it still works
-    the way you intended.
-    One of the most important features of the tests is that it should alert other
-    developers when their changes will have an impact on the behavior of your
-    module.  For example, if a developer removes a feature that you depend on,
-    your test should break so they know that the feature is needed.
+    Basic test: download sample data and verify the logic can check for image data.
     """
 
     self.delayDisplay("Starting the test")
-    #
-    # first, get some data
-    #
-    import urllib.request, urllib.parse, urllib.error
-    downloads = (
-        ('http://slicer.kitware.com/midas3/download?items=5767', 'FA.nrrd', slicer.util.loadVolume),
-        )
 
-    for url, name, loader in downloads:
-      filePath = slicer.app.temporaryPath + '/' + name
-      if not os.path.exists(filePath) or os.stat(filePath).st_size == 0:
-        print('Requesting download %s from %s...\n' % (name, url))
-        urllib.request.urlretrieve(url, filePath)
-      if loader:
-        print('Loading %s...\n' % (name,))
-        loader(filePath)
-    self.delayDisplay('Finished with download and loading\n')
+    # Use Slicer's built-in SampleData module
+    import SampleData
+    volumeNode = SampleData.downloadSample("MRHead")
+    self.delayDisplay("Loaded MRHead sample data")
 
-    volumeNode = slicer.util.getNode(pattern="FA")
+    self.assertIsNotNone(volumeNode)
     logic = NeedleFinderLogic()
     self.assertTrue(logic.hasImageData(volumeNode))
-    self.delayDisplay('Test passed!')
+    self.delayDisplay("Test passed!")

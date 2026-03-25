@@ -48,17 +48,6 @@ from functools import partial
 import xml.etree.ElementTree
 from xml.etree.ElementTree import tostring
 
-_has_editor_lib = False
-try:
-    import EditorLib
-    from Editor import EditorWidget
-    _has_editor_lib = True
-except ImportError:
-    logging.warning(
-        "EditorLib/Editor not available (removed in Slicer 5.x). "
-        "Segmentation editor features will be disabled."
-    )
-
 # profiling/debugging helper functions:
 def whoami():
     return inspect.stack()[1][3]
@@ -266,13 +255,11 @@ class NeedleFinderWidget(ScriptedLoadableModuleWidget):
     if self.CrosshairNode:
       self.CrosshairNodeObserverTag = self.CrosshairNode.AddObserver(slicer.vtkMRMLCrosshairNode.CursorPositionModifiedEvent, self.processEvent)
 
-    # segmentation editor variables
-    self.editorWidget = None
-    self.editUtil = None
-    self.undoRedo = None
-    self.wandLogics = {}
+    # segmentation variables
+    self.segmentEditorWidget = None
+    self.segmentEditorNode = None
     self.labelMapNode = None
-    self.currentLabel = None
+    self.currentLabel = 0
     self.tempPointList = []
     self.undoListFid = [{} for i in range(30)]
 
@@ -436,20 +423,8 @@ class NeedleFinderWidget(ScriptedLoadableModuleWidget):
       if sGrn == None :
         sGrn = slicer.mrmlScene.GetNodeByID("vtkMRMLSliceNode3")
       sGrn.SetUseLabelOutline(1)
-    if self.editorWidget:
-      self.editorWidget.setMasterNode(vn)
-      self.editorWidget.setMergeNode(self.labelMapNode)
-
-  def onEditorCollapsed(self, collapsed):
-    """
-    When segmentation editor is used before needle finder, prepare a a label volume.
-    """
-    # productive
-    profprint()
-    if collapsed:
-      pass
-    else:
-      self.createAddOrSelectLabelMapNode()
+    if self.segmentEditorWidget:
+      self.segmentEditorWidget.setSourceVolumeNode(vn)
 
   def setup(self):
     """
@@ -853,45 +828,25 @@ class NeedleFinderWidget(ScriptedLoadableModuleWidget):
     self.setAsValNeedlesButton.setEnabled(1)
     self.setAsValNeedlesButton.setStyleSheet("background-color: qlineargradient(x1: 0, y1: 0, x2: 0, y2: 1, stop: 0 #f7f700, stop: 1 #dbdb00)");
 
-    # ## create segmentation editor environment:
-    editorWidgetParent = None
-    if _has_editor_lib:
-      editorWidgetParent = slicer.qMRMLWidget()
-      editorWidgetParent.setLayout(qt.QVBoxLayout())
-      editorWidgetParent.setMRMLScene(slicer.mrmlScene)
-      editorWidgetParent.hide()
-      self.editorWidget = None
-      # The order of statements is important here for resetNeedleDetection to work!!
-      self.editorWidget = EditorWidget(editorWidgetParent, False)
-      self.editUtil = None
-      self.editUtil = self.editorWidget.editUtil  # EditorLib.EditUtil.EditUtil()
-      self.currentLabel = None
-      self.setWandEffectOptions()  # has to be done before setup():
-      self.editUtil.setCurrentEffect("DefaultTool")
-      self.editorWidget.setup()
-      # our mouse mode button
-      self.editorWidget.toolsBox.actions["NeedleFinder"] = qt.QAction(0)  # dummy self.fiducialButton
-      self.undoRedo = None
-      self.undoRedo = self.editorWidget.toolsBox.undoRedo
-      self.currentLabel = self.editUtil.getLabel()
-      self.editorWidget.editLabelMapsFrame.setText("Edit Segmentation")
-      self.editorWidget.editLabelMapsFrame.connect('contentsCollapsed(bool)', self.onEditorCollapsed)
-      editorWidgetParent.show()
-      self.editUtil.setCurrentEffect("NeedleFinder")
-    else:
-      logging.warning("EditorLib not available; segmentation editor features disabled.")
-      self.editorWidget = None
-      self.editUtil = None
-      self.undoRedo = None
-      self.currentLabel = None
+    # ## create segmentation editor environment (Slicer 5.x):
+    self.segmentEditorWidget = slicer.qMRMLSegmentEditorWidget()
+    self.segmentEditorWidget.setMaximumNumberOfUndoStates(10)
+    self.segmentEditorNode = slicer.mrmlScene.GetSingletonNode("SegmentEditor", "vtkMRMLSegmentEditorNode")
+    if not self.segmentEditorNode:
+      self.segmentEditorNode = slicer.mrmlScene.CreateNodeByClass("vtkMRMLSegmentEditorNode")
+      self.segmentEditorNode.UnRegister(None)
+      self.segmentEditorNode.SetSingletonTag("SegmentEditor")
+      self.segmentEditorNode = slicer.mrmlScene.AddNode(self.segmentEditorNode)
+    self.segmentEditorWidget.setMRMLSegmentEditorNode(self.segmentEditorNode)
+    self.segmentEditorWidget.setMRMLScene(slicer.mrmlScene)
+    self.currentLabel = 0
 
     self.scenePath = qt.QLineEdit()
     self.cleanSceneButton = qt.QPushButton('Clean Scene')
     self.cleanSceneButton.connect('clicked()', logic.cleanScene)
 
     # devFrame.addRow(self.displayFiducialButton)
-    if editorWidgetParent:
-      devFrame.addWidget(editorWidgetParent)
+    devFrame.addWidget(self.segmentEditorWidget)
     devFrame.addRow(self.scenePath)
     devFrame.addRow(self.cleanSceneButton)
     devFrame.addRow(self.skipSegLimitButton)
@@ -947,23 +902,6 @@ class NeedleFinderWidget(ScriptedLoadableModuleWidget):
 
     self.onResetParameters()
     self.setupShortcuts()
-
-  def setWandEffectOptions(self, tolerance=20, maxPixels=200, fillMode="Volume"):
-    """
-    Set the wand logic parameters in parameter node
-    """
-    # research
-    profprint()
-    if not _has_editor_lib or self.editUtil is None:
-      return
-    parameterNode = self.editUtil.getParameterNode()
-    # set options
-    parameterNode.SetParameter("WandEffect,tolerance", str(tolerance))
-    parameterNode.SetParameter("WandEffect,maxPixels", str(maxPixels))
-    parameterNode.SetParameter("WandEffect,fillMode", fillMode)
-    wandOpt = EditorLib.WandEffectOptions()
-    wandOpt.setMRMLDefaults()
-    wandOpt.__del__()
 
   def keyPressEvent(self, event):
     print("You Pressed: " + event.text())
@@ -1174,13 +1112,9 @@ class NeedleFinderWidget(ScriptedLoadableModuleWidget):
       self.fiducialObturatorButton.checked = 0
       self.start()
       self.fiducialButton.text = "2. Stop Giving Needle Tips [CTRL + ENTER]"
-      if widget.editUtil:
-        widget.editUtil.setCurrentEffect("NeedleFinder")
     else:
       self.stop()
       self.fiducialButton.text = "2. Start Giving Needle Tips [CTRL + ENTER]"
-      if widget.editUtil:
-        widget.editUtil.setCurrentEffect("DefaultTool")
       widget.resetDetectionButton.setEnabled(1)
       tempFidNodes = slicer.mrmlScene.GetNodesByName('.temp')
       for i in range(tempFidNodes.GetNumberOfItems()):
@@ -1372,26 +1306,18 @@ class NeedleFinderWidget(ScriptedLoadableModuleWidget):
                   node.SetFiducialCoordinates(ras)
                   self.tempPointList.append(ras)  # [0],ras[1],ras[2])
                   print("tempPointList: ", self.tempPointList)
-                if _has_editor_lib and sliceLogic not in self.wandLogics:
-                  if not self.labelMapNode:
-                    self.createAddOrSelectLabelMapNode()
-                  print("creating new segment logic")
-                  #sliceLogic.SetLabelLayer(...)
-                  wl = EditorLib.WandEffectLogic(sliceLogic)
-                  wl.undoRedo = self.undoRedo
-                  wl.editUtil = self.editUtil
-                  self.wandLogics[sliceLogic] = wl
+                if not self.labelMapNode:
+                  self.createAddOrSelectLabelMapNode()
                 print("tracking needle upwards")
-                self.setWandEffectOptions()  # !! the parameter node can be altered/deleted from outside so re-create/reset option node
-                wl = self.wandLogics[sliceLogic]
                 xy = interactor.GetEventPosition()
                 print("xy: ", xy)
-                if wl.labelAtXY(xy):
-                  self.editUtil.setLabel(wl.labelAtXY(xy))
+                # Check if there's already a label at the click position
+                existingLabel = self.logic.labelAtIJK(self.labelMapNode, self.logic.ras2ijk(ras))
+                if existingLabel:
+                  self.currentLabel = existingLabel
                 else:
                   print("new label")
                   self.currentLabel += 1
-                  self.editUtil.setLabel(self.currentLabel)
                 slRed=slicer.app.layoutManager().sliceWidget("Red").sliceLogic()
                 slYel=slicer.app.layoutManager().sliceWidget("Yellow").sliceLogic()
                 slGrn=slicer.app.layoutManager().sliceWidget("Green").sliceLogic()
@@ -1407,7 +1333,7 @@ class NeedleFinderWidget(ScriptedLoadableModuleWidget):
                 org=self.labelMapNode.GetOrigin()
                 if widget.algoVersParameter.value >4:
                   print("wanding")
-                  self.wandLogics[sliceLogic].apply(xy)
+                  self.logic.wandFillAtIJK(self.labelMapNode, ijk, self.currentLabel)
                   #>>> exp05 walk up (proximal) the found chip from wanding
                   print("shape: ",shape)
                   shape.reverse()
@@ -1536,8 +1462,7 @@ class NeedleFinderWidget(ScriptedLoadableModuleWidget):
     profprint()
     widget = slicer.modules.NeedleFinderWidget
     print("clearing label map")
-    if self.undoRedo:
-      self.undoRedo.saveState()
+    slicer.mrmlScene.SaveStateForUndo()
     labelImage = self.labelMapNode.GetImageData()
     shape = list(labelImage.GetDimensions()).reverse() # ??? this code has no effect, shape=None !!!
     labelArray = vtk.util.numpy_support.vtk_to_numpy(labelImage.GetPointData().GetScalars()).reshape(shape)
@@ -1545,8 +1470,9 @@ class NeedleFinderWidget(ScriptedLoadableModuleWidget):
       labelArray[:] = 0
     else:
       labelArray[labelArray==label]=0
-    if self.editUtil:
-      self.editUtil.markVolumeNodeAsModified(widget.labelMapNode)
+    if widget.labelMapNode:
+      widget.labelMapNode.GetImageData().Modified()
+      widget.labelMapNode.Modified()
 
   def processEventNeedleValidation(self, observee, event=None):
     """
@@ -1969,6 +1895,36 @@ class NeedleFinderLogic(ScriptedLoadableModuleLogic):
       if node != None and node.GetClassName() == 'vtkMRMLAnnotationFiducialNode':
         node.SetDisplayVisibility(v)
 
+
+  def labelAtIJK(self, labelMapNode, ijk):
+    """Query the label value at an IJK position in the label map."""
+    if not labelMapNode or not labelMapNode.GetImageData():
+      return 0
+    imageData = labelMapNode.GetImageData()
+    dims = imageData.GetDimensions()
+    i, j, k = int(round(ijk[0])), int(round(ijk[1])), int(round(ijk[2]))
+    if 0 <= i < dims[0] and 0 <= j < dims[1] and 0 <= k < dims[2]:
+      return int(imageData.GetScalarComponentAsFloat(i, j, k, 0))
+    return 0
+
+  def wandFillAtIJK(self, labelMapNode, ijk, newLabel, tolerance=20):
+    """Flood fill label map at IJK position using vtkImageThresholdConnectivity."""
+    if not labelMapNode or not labelMapNode.GetImageData():
+      return
+    imageData = labelMapNode.GetImageData()
+    seedPoints = vtk.vtkPoints()
+    seedPoints.InsertNextPoint(int(round(ijk[0])), int(round(ijk[1])), int(round(ijk[2])))
+    seedValue = imageData.GetScalarComponentAsFloat(int(round(ijk[0])), int(round(ijk[1])), int(round(ijk[2])), 0)
+    floodFill = vtk.vtkImageThresholdConnectivity()
+    floodFill.SetInputData(imageData)
+    floodFill.SetSeedPoints(seedPoints)
+    floodFill.ThresholdBetween(seedValue - tolerance, seedValue + tolerance)
+    floodFill.SetInValue(newLabel)
+    floodFill.SetReplaceIn(True)
+    floodFill.SetReplaceOut(False)
+    floodFill.Update()
+    imageData.DeepCopy(floodFill.GetOutput())
+    labelMapNode.Modified()
 
   def hasImageData(self, volumeNode):
     """ Test:
@@ -2548,21 +2504,23 @@ class NeedleFinderLogic(ScriptedLoadableModuleLogic):
     """
     # research #obsolete
     profbox(whoami())
-    # Apply Island Effect
-    if not _has_editor_lib:
-      logging.warning("EditorLib not available; island effect cannot be applied.")
+    # Apply Island Effect using vtkITK
+    widget = slicer.modules.NeedleFinderWidget
+    if not widget.labelMapNode:
+      logging.warning("No label map node; island effect cannot be applied.")
       return
-    editUtil = EditorLib.EditUtil.EditUtil()
-    parameterNode = editUtil.getParameterNode()
-    sliceLogic = editUtil.getSliceLogic()
-    lm = slicer.app.layoutManager()
-    sliceWidget = lm.sliceWidget('Red')
-    islandsEffect = EditorLib.IdentifyIslandsEffectOptions()
-    islandsEffect.setMRMLDefaults()
-    islandsEffect.__del__()
-    islandTool = EditorLib.IdentifyIslandsEffectLogic(sliceLogic)
-    parameterNode.SetParameter("IslandEffect,minimumSize", '0')
-    islandTool.removeIslands()
+    import vtkITK
+    labelImageData = widget.labelMapNode.GetImageData()
+    castIn = vtk.vtkImageCast()
+    castIn.SetInputData(labelImageData)
+    castIn.SetOutputScalarTypeToUnsignedInt()
+    islandMath = vtkITK.vtkITKIslandMath()
+    islandMath.SetInputConnection(castIn.GetOutputPort())
+    islandMath.SetFullyConnected(False)
+    islandMath.SetMinimumSize(0)
+    islandMath.Update()
+    labelImageData.DeepCopy(islandMath.GetOutput())
+    widget.labelMapNode.Modified()
     # select the image node from the Red slice viewer
     m = vtk.vtkMatrix4x4()
     volumeNode = slicer.app.layoutManager().sliceWidget("Red").sliceLogic().GetBackgroundLayer().GetVolumeNode()
@@ -8917,20 +8875,18 @@ class NeedleFinderLogic(ScriptedLoadableModuleLogic):
     # different label to each
     #####################################################################################
     print('island effect')
-    if not _has_editor_lib:
-      logging.warning("EditorLib not available; island effect cannot be applied.")
-      return
-    editUtil = EditorLib.EditUtil.EditUtil()
-    parameterNode = editUtil.getParameterNode()
-    sliceLogic = editUtil.getSliceLogic()
-    lm = slicer.app.layoutManager()
-    islandsEffect = EditorLib.IdentifyIslandsEffectOptions()
-    islandsEffect.setMRMLDefaults()
-    islandsEffect.__del__()
-    islandTool = EditorLib.IdentifyIslandsEffectLogic(sliceLogic)
-    parameterNode.SetParameter("IslandEffect,minimumSize",'100')
-    islandTool.removeIslands()
-    LabelStatisticsLogic(volumeNode,roiSegmentation)
+    import vtkITK
+    labelImageData = roiSegmentation.GetImageData()
+    castIn = vtk.vtkImageCast()
+    castIn.SetInputData(labelImageData)
+    castIn.SetOutputScalarTypeToUnsignedInt()
+    islandMath = vtkITK.vtkITKIslandMath()
+    islandMath.SetInputConnection(castIn.GetOutputPort())
+    islandMath.SetFullyConnected(False)
+    islandMath.SetMinimumSize(100)
+    islandMath.Update()
+    labelImageData.DeepCopy(islandMath.GetOutput())
+    roiSegmentation.Modified()
     labelData = roiSegmentation.GetImageData()
     stataccum = vtk.vtkImageAccumulate()
     stataccum.SetInputData(labelData)

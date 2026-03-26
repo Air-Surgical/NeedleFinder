@@ -2076,7 +2076,7 @@ class NeedleFinderLogic(ScriptedLoadableModuleLogic):
     widget = slicer.modules.NeedleFinderWidget
     if contourNode != None:
       contourNode.SetDisplayVisibility(abs(widget.hideContourButton.isChecked() - 1))
-      contourNode.GetModelDisplayNode().SetSliceIntersectionVisibility(abs(widget.hideContourButton.isChecked() - 1))
+      contourNode.GetModelDisplayNode().SetVisibility2D(abs(widget.hideContourButton.isChecked() - 1))
 
   def displayNeedleTube(self, ID):
     """
@@ -2089,7 +2089,7 @@ class NeedleFinderLogic(ScriptedLoadableModuleLogic):
     nVisibility = displayNode.GetVisibility()
     # print nVisibility
     if nVisibility:
-      displayNode.SliceIntersectionVisibilityOff()
+      displayNode.Visibility2DOff()
       displayNode.SetVisibility(0)
       # also turn off yellow slice
       sYellow = slicer.mrmlScene.GetNodeByID("vtkMRMLSliceNodeYellow")
@@ -2100,7 +2100,7 @@ class NeedleFinderLogic(ScriptedLoadableModuleLogic):
       reformatLogic.SetSliceNormal(sYellow, 1, 0, 0)
       sYellow.Modified()
     else:
-      displayNode.SliceIntersectionVisibilityOn()
+      displayNode.Visibility2DOn()
       displayNode.SetVisibility(1)
 
   def reformatSagittalView4Needle(self, ID):
@@ -2294,7 +2294,7 @@ class NeedleFinderLogic(ScriptedLoadableModuleLogic):
 
     displayNode.SetVisibility(1)
     displayNode.SetOpacity(0.06)
-    displayNode.SetSliceIntersectionVisibility(1)
+    displayNode.SetVisibility2D(1)
     displayNode.SetScalarVisibility(1)
     displayNode.SetActiveScalarName('ImageScalars')
     displayNode.SetAndObserveColorNodeID('vtkMRMLColorTableNodeFileHotToColdRainbow2.txt')
@@ -5837,7 +5837,7 @@ class NeedleFinderLogic(ScriptedLoadableModuleLogic):
     # ## Add to scene
     modelDisplay.SetInputPolyDataConnection(model.GetPolyDataConnection())
     scene.AddNode(model)
-    model.GetDisplayNode().SliceIntersectionVisibilityOn()
+    model.GetDisplayNode().Visibility2DOn()
     if needleType == 'Validation':
       model.SetName('.manual-seg_' + str(colorVar))
     elif needleType == 'Obturator':
@@ -5950,7 +5950,7 @@ class NeedleFinderLogic(ScriptedLoadableModuleLogic):
     tube.Update()
 
     model.SetAndObservePolyData(tube.GetOutput())
-    model.GetDisplayNode().SliceIntersectionVisibilityOn()
+    model.GetDisplayNode().Visibility2DOn()
     model.GetDisplayNode().SetOpacity(1-trans)
     if needleType == 'Validation':
       model.SetName('.manual-seg_' + str(colorVar))
@@ -6088,7 +6088,7 @@ class NeedleFinderLogic(ScriptedLoadableModuleLogic):
     tube.Update()
 
     model.SetAndObservePolyData(tube.GetOutput())
-    model.GetDisplayNode().SliceIntersectionVisibilityOn()
+    model.GetDisplayNode().Visibility2DOn()
     model.GetDisplayNode().SetOpacity(1-trans)
     if needleType == 'Validation':
       model.SetName('manual-seg_' + str(colorVar))
@@ -7069,7 +7069,7 @@ class NeedleFinderLogic(ScriptedLoadableModuleLogic):
 
     # displayNode.SetPolyData(modelNode.GetPolyData())
 
-    # displayNode.SetSliceIntersectionVisibility(0)
+    # displayNode.SetVisibility2D(0)
     # displayNode.SetScalarVisibility(1)
     # displayNode.SetActiveScalarName('scalars')
     # displayNode.SetScalarRange(0,230)
@@ -7172,8 +7172,8 @@ class NeedleFinderLogic(ScriptedLoadableModuleLogic):
         polydata = self.needlenode[i][1].GetPolyData()
         polydata.GetPoint(0, self.base[i])
 
-        self.displaynode[i].SliceIntersectionVisibilityOn()
-        self.displaynodeB[i].SliceIntersectionVisibilityOn()
+        self.displaynode[i].Visibility2DOn()
+        self.displaynodeB[i].Visibility2DOn()
         bestmatch = None
         mindist = None
         for j in range(63):
@@ -7255,10 +7255,10 @@ class NeedleFinderLogic(ScriptedLoadableModuleLogic):
         nVisibility = displayNode.GetVisibility()
         # print nVisibility
         if nVisibility:
-          displayNode.SliceIntersectionVisibilityOff()
+          displayNode.Visibility2DOff()
           displayNode.SetVisibility(0)
         else:
-          displayNode.SliceIntersectionVisibilityOn()
+          displayNode.Visibility2DOn()
           displayNode.SetVisibility(1)
 
   def displayNeedle(self, i):
@@ -7274,10 +7274,10 @@ class NeedleFinderLogic(ScriptedLoadableModuleLogic):
         nVisibility = displayNode.GetVisibility()
 
         if nVisibility:
-          displayNode.SliceIntersectionVisibilityOff()
+          displayNode.Visibility2DOff()
           displayNode.SetVisibility(0)
         else:
-          displayNode.SliceIntersectionVisibilityOn()
+          displayNode.Visibility2DOn()
           displayNode.SetVisibility(1)
 
   def showOneNeedle(self, i, visibility):
@@ -7325,14 +7325,14 @@ class NeedleFinderLogic(ScriptedLoadableModuleLogic):
       if visibility == 0:
 
         displayNode.SetVisibility(0)
-        displayNode.SetSliceIntersectionVisibility(0)
+        displayNode.SetVisibility2D(0)
         if fiducialNode != None:
           fiducialNode.SetDisplayVisibility(0)
 
       else:
 
         displayNode.SetVisibility(1)
-        displayNode.SetSliceIntersectionVisibility(1)
+        displayNode.SetVisibility2D(1)
         if fiducialNode != None:
           fiducialNode.SetDisplayVisibility(1)
 
@@ -7385,7 +7385,7 @@ class NeedleFinderLogic(ScriptedLoadableModuleLogic):
     modelNode.SetAndObserveDisplayNodeID(displayNode.GetID())
 
     displayNode.SetColor(self.color[i])
-    displayNode.SetSliceIntersectionVisibility(0)
+    displayNode.SetVisibility2D(0)
     pNode = self.parameterNode()
     pNode.SetParameter(fileName, modelNode.GetID())
     mrmlScene.AddNode(modelNode)
@@ -7420,7 +7420,7 @@ class NeedleFinderLogic(ScriptedLoadableModuleLogic):
           if needleNode.GetDisplayVisibility() == 1:
             modelNode.SetDisplayVisibility(abs(int(slicer.modules.NeedleFinderWidget.displayRadSegmentedButton.checked) - 1))
             d = modelNode.GetDisplayNode()
-            d.SetSliceIntersectionVisibility(abs(int(slicer.modules.NeedleFinderWidget.displayRadSegmentedButton.checked) - 1))
+            d.SetVisibility2D(abs(int(slicer.modules.NeedleFinderWidget.displayRadSegmentedButton.checked) - 1))
 
   def displayContour(self, i, visibility):
     """
@@ -7440,7 +7440,7 @@ class NeedleFinderLogic(ScriptedLoadableModuleLogic):
           if needleNode.GetDisplayVisibility() == 1:
             modelNode.SetDisplayVisibility(visibility)
             d = modelNode.GetDisplayNode()
-            d.SetSliceIntersectionVisibility(visibility)
+            d.SetVisibility2D(visibility)
 
   def displayContours(self):
     """
@@ -7457,7 +7457,7 @@ class NeedleFinderLogic(ScriptedLoadableModuleLogic):
           if needleNode.GetDisplayVisibility() == 1:
             modelNode.SetDisplayVisibility(abs(int(slicer.modules.NeedleFinderWidget.displayContourButton.checked) - 1))
             d = modelNode.GetDisplayNode()
-            d.SetSliceIntersectionVisibility(abs(int(slicer.modules.NeedleFinderWidget.displayContourButton.checked) - 1))
+            d.SetVisibility2D(abs(int(slicer.modules.NeedleFinderWidget.displayContourButton.checked) - 1))
 
   def displayFiducial(self):
     """
@@ -8117,7 +8117,7 @@ class NeedleFinderLogic(ScriptedLoadableModuleLogic):
             result.append(match)
             found.append(min(dist)[1])
             found.append(node.GetID())
-            node.GetDisplayNode().SetSliceIntersectionVisibility(1)
+            node.GetDisplayNode().SetVisibility2D(1)
     # print result
     return result
 
@@ -8138,7 +8138,7 @@ class NeedleFinderLogic(ScriptedLoadableModuleLogic):
         colorVar = random.randrange(50, 100, 1)  # ??? /(100.)
         nth = int(colorVar) % MAXCOL
         displayNode.SetColor(self.color[int(nth)][0], self.color[int(nth)][1], self.color[int(nth)][2])
-        displayNode.SetSliceIntersectionVisibility(True)
+        displayNode.SetVisibility2D(True)
         displayNode.SetSliceIntersectionThickness(2)
         #displayNode.SetOpacity(0.7)
 
@@ -9145,9 +9145,9 @@ class NeedleFinderLogic(ScriptedLoadableModuleLogic):
           templateNode = slicer.util.getNode('Template')
           obturatorNode = slicer.util.getNode('Obturator_reg')
           df = templateNode.GetDisplayNode()
-          df.SetSliceIntersectionVisibility(1)
+          df.SetVisibility2D(1)
           do = obturatorNode.GetDisplayNode()
-          do.SetSliceIntersectionVisibility(1)
+          do.SetVisibility2D(1)
           tNode = slicer.util.getNode('vtkMRMLLinearTransformNode_Template')
           # roiNode = slicer.mrmlScene.GetNodeByID()
           templateNode.SetAndObserveTransformNodeID(tNode.GetID())

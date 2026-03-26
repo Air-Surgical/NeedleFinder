@@ -6045,27 +6045,23 @@ class NeedleFinderLogic(ScriptedLoadableModuleLogic):
     polyData.SetPoints(points)
     lines = vtk.vtkCellArray()
     polyData.SetLines(lines)
-    linesIDArray = lines.GetData()
-    linesIDArray.Reset()
-    linesIDArray.InsertNextTuple1(0)
-    polygons = vtk.vtkCellArray()
-    polyData.SetPolys(polygons)
-    idArray = polygons.GetData()
-    idArray.Reset()
-    idArray.InsertNextTuple1(0)
     nbEvaluationPoints = 50
     n = len(controlPointListSorted) - 1
     Q = [[0, 0, 0] for t in range(nbEvaluationPoints + 1)]
-    # start calculation
-    for t in range(nbEvaluationPoints+1): #+1):  #<<< lil bug    <<< we need +1, it's not a bug! otherwise needle is too short!
+    # start calculation - compute Bezier curve points
+    pointIds = []
+    for t in range(nbEvaluationPoints+1):
       tt = float(t) / (1 * nbEvaluationPoints)
       for j in range(3):
         for i in range(n + 1):
           Q[t][j] += self.binomial(n, i) * (1 - tt) ** (n - i) * tt ** i * controlPointListSorted[i][j]
-      pointIndex = points.InsertNextPoint(*Q[t])
-      linesIDArray.InsertNextTuple1(pointIndex)
-      linesIDArray.SetTuple1(0, linesIDArray.GetNumberOfTuples() - 1)
-      lines.SetNumberOfCells(1)
+      pointIds.append(points.InsertNextPoint(*Q[t]))
+    # Build polyline cell (VTK 9.x compatible)
+    polyLine = vtk.vtkPolyLine()
+    polyLine.GetPointIds().SetNumberOfIds(len(pointIds))
+    for idx, pid in enumerate(pointIds):
+      polyLine.GetPointIds().SetId(idx, pid)
+    lines.InsertNextCell(polyLine)
     # ## Create model node
     model = slicer.vtkMRMLModelNode()
     model.SetScene(scene)
